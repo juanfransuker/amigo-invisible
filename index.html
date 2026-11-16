@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amigo invisible</title>
+<style>
+:root{--bg:#fff7f0;--card:#ffffff;--tx:#2b2220;--mut:#7a6a64;--ac:#c8372d;--ac2:#fbe3df;--bd:#ecd9d2}
+@media (prefers-color-scheme:dark){:root{--bg:#1d1716;--card:#2a2120;--tx:#f5ebe8;--mut:#b5a29b;--ac:#ef6a5e;--ac2:#4a2a27;--bd:#43322f}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+main{max-width:520px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:1.6rem;margin:8px 0 4px}
+p.sub{color:var(--mut);margin:0 0 16px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin-bottom:14px}
+label{display:block;font-weight:600;margin:0 0 6px}
+input,select,textarea{width:100%;padding:11px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font:inherit}
+textarea{min-height:130px;resize:vertical}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:12px 16px;background:var(--ac);color:#fff;cursor:pointer;width:100%}
+button.sec{background:var(--ac2);color:var(--tx)}
+button.sm{width:auto;padding:8px 12px;font-size:.9rem}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.row>*{flex:1}
+.chip{display:flex;justify-content:space-between;align-items:center;background:var(--ac2);border-radius:10px;padding:8px 12px;margin-top:6px;font-size:.95rem}
+.chip button{background:none;color:var(--tx);width:auto;padding:0 4px}
+.chk{display:flex;gap:8px;align-items:center;font-weight:400;margin:8px 0}
+.chk input{width:auto}
+.err{color:var(--ac);margin-top:8px;font-weight:600}
+.big{font-size:2rem;text-align:center;margin:12px 0;font-weight:700;color:var(--ac)}
+.pin{font-family:ui-monospace,monospace;font-weight:700}
+.mut{color:var(--mut);font-size:.9rem}
+a{color:var(--ac)}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script>
+const $=s=>document.querySelector(s), app=$('#app');
+const te=new TextEncoder(), td=new TextDecoder();
+const b64=u=>btoa(String.fromCharCode(...u)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const unb64=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
+const esc=s=>s.replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function getKey(pin,salt){
+  const m=await crypto.subtle.importKey('raw',te.encode(pin),'PBKDF2',false,['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2',salt,iterations:150000,hash:'SHA-256'},m,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+}
+async function encrypt(text,pin){
+  const salt=crypto.getRandomValues(new Uint8Array(16)), iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},await getKey(pin,salt),te.encode(text)));
+  return [b64(salt),b64(iv),b64(ct)];
+}
+async function decrypt([salt,iv,ct],pin){
+  const pt=await crypto.subtle.decrypt({name:'AES-GCM',iv:unb64(iv)},await getKey(pin,unb64(salt)),unb64(ct));
+  return td.decode(pt);
+}
+const rnd=n=>crypto.getRandomValues(new Uint32Array(1))[0]%n;
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=rnd(i+1);[a[i],a[j]]=[a[j],a[i]]}return a}
+
+/* ---------- Organizador ---------- */
+let rules=[];
+function names(){return [...new Set($('#names').value.split('\n').map(s=>s.trim()).filter(Boolean))]}
+function fillSelects(){
+  const n=names(), o=n.map(x=>`<option>${esc(x)}</option>`).join('');
+  ['#ra','#rb'].forEach(id=>{const el=$(id),v=el.value;el.innerHTML=o;if(n.includes(v))el.value=v});
+}
+function drawRules(){
+  $('#rules').innerHTML=rules.map((r,i)=>`<div class="chip"><span>${esc(r[0])} no regala a ${esc(r[1])}${r[2]?' (y al revés)':''}</span><button onclick="rules.splice(${i},1);drawRules()">✕</button></div>`).join('');
+}
+function organizer(){
+  app.innerHTML=`
+  <h1>🎁 Amigo invisible</h1>
+  <p class="sub">Crea el sorteo, y cada uno descubre su amigo desde su móvil.</p>
+  <div class="card"><label>Título (opcional)</label><input id="title" placeholder="Navidad familia 2026"></div>
+  <div class="card"><label>Participantes (uno por línea)</label><textarea id="names" placeholder="Ana&#10;Luis&#10;Marta&#10;Pedro"></textarea></div>
+  <div class="card"><label>Condiciones</label>
+    <div class="row"><select id="ra"></select><select id="rb"></select></div>
+    <label class="chk"><input type="checkbox" id="both" checked> También al revés</label>
+    <button class="sec sm" id="addrule">Añadir condición: el primero NO regala al segundo</button>
+    <div id="rules"></div>
+    <label class="chk" style="margin-top:12px"><input type="checkbox" id="nomutual"> Evitar que dos personas se regalen entre sí</label>
+  </div>
+  <button id="go">Sortear</button>
+  <div class="err" id="err"></div>
+  <div id="out"></div>`;
+  $('#names').addEventListener('input',fillSelects);
+  $('#addrule').onclick=()=>{
+    const a=$('#ra').value,b=$('#rb').value;
+    if(!a||!b||a===b)return;
+    rules.push([a,b,$('#both').checked]);drawRules();
+  };
+  $('#go').onclick=run;
+  drawRules();
+}
+function solve(n,forb,nomutual){
+  const used=Array(n).fill(false),res=Array(n).fill(-1);
+  let steps=0;
+  (function go(i){
+    if(++steps>2e6)return false;
+    if(i===n)return true;
+    for(const j of shuffle([...Array(n).keys()])){
+      if(used[j]||j===i||forb.has(i+'>'+j))continue;
+      if(nomutual&&j<i&&res[j]===i)continue;
+      used[j]=true;res[i]=j;
+      if(go(i+1))return true;
+      used[j]=false;res[i]=-1;
+    }
+    return false;
+  })(0);
+  return res.every(x=>x>=0)?res:null;
+}
+async function run(){
+  const n=names(),err=$('#err');err.textContent='';$('#out').innerHTML='';
+  if(n.length<3){err.textContent='Hacen falta al menos 3 participantes.';return}
+  const forb=new Set();
+  rules.forEach(([a,b,both])=>{
+    const i=n.indexOf(a),j=n.indexOf(b);
+    if(i<0||j<0)return;
+    forb.add(i+'>'+j);if(both)forb.add(j+'>'+i);
+  });
+  const res=solve(n.length,forb,$('#nomutual').checked);
+  if(!res){err.textContent='Con esas condiciones no hay ningún sorteo posible. Quita alguna.';return}
+  $('#go').textContent='Sorteando…';
+  const people=[],pins=[];
+  for(let i=0;i<n.length;i++){
+    const pin=String(100000+rnd(900000));pins.push(pin);
+    people.push([n[i],...await encrypt(n[res[i]],pin)]);
+  }
+  const data=b64(te.encode(JSON.stringify({t:$('#title').value.trim(),p:people})));
+  const link=location.href.split('#')[0]+'#'+data;
+  $('#go').textContent='Sortear de nuevo';
+  $('#out').innerHTML=`
+  <div class="card" style="margin-top:14px"><b>✅ Sorteo hecho</b>
+  <p class="mut">Este enlace es el mismo para todos. Cada persona necesita además su PIN personal. No se muestra a quién le toca a nadie.</p>
+  <button class="sec" id="copy">Copiar enlace</button></div>
+  <div class="card"><label>PIN de cada persona</label>
+  ${n.map((x,i)=>`<div class="chip"><span>${esc(x)}: <span class="pin">${pins[i]}</span></span><a href="https://wa.me/?text=${encodeURIComponent(`Hola ${x}, amigo invisible${$('#title').value?' ('+$('#title').value+')':''}: ${link}\nTu PIN: ${pins[i]}`)}" target="_blank" rel="noopener">WhatsApp</a></div>`).join('')}
+  <p class="mut">Envía a cada uno solo su PIN, en privado.</p></div>`;
+  $('#copy').onclick=async()=>{try{await navigator.clipboard.writeText(link);$('#copy').textContent='¡Copiado!'}catch(e){prompt('Copia el enlace:',link)}};
+}
+
+/* ---------- Participante ---------- */
+function participant(d){
+  app.innerHTML=`
+  <h1>🎁 ${esc(d.t||'Amigo invisible')}</h1>
+  <p class="sub">Elige tu nombre e introduce tu PIN para ver a quién le regalas.</p>
+  <div class="card"><label>¿Quién eres?</label>
+  <select id="me">${d.p.map((p,i)=>`<option value="${i}">${esc(p[0])}</option>`).join('')}</select>
+  <label style="margin-top:12px">Tu PIN</label>
+  <input id="pin" inputmode="numeric" autocomplete="off" placeholder="6 cifras">
+  <div style="height:12px"></div>
+  <button id="see">Ver mi amigo invisible</button>
+  <div class="err" id="err"></div></div>
+  <div id="res"></div>
+  <p class="mut"><a href="${location.href.split('#')[0]}">Crear un sorteo nuevo</a></p>`;
+  $('#see').onclick=async()=>{
+    $('#err').textContent='';
+    try{
+      const p=d.p[+$('#me').value];
+      const who=await decrypt(p.slice(1),$('#pin').value.trim());
+      $('#res').innerHTML=`<div class="card"><p class="mut" style="margin:0">Hola ${esc(p[0])}, le regalas a:</p><div class="big">🎅 ${esc(who)}</div><p class="mut" style="margin:0">Si vuelves a abrir el enlace con tu PIN, te saldrá el mismo nombre. Que nadie mire tu pantalla.</p></div>`;
+    }catch(e){$('#err').textContent='PIN incorrecto para ese nombre.';$('#res').innerHTML=''}
+  };
+}
+
+/* ---------- Arranque ---------- */
+(function(){
+  const h=location.hash.slice(1);
+  if(h){
+    try{participant(JSON.parse(td.decode(unb64(h))));return}catch(e){}
+  }
+  organizer();
+})();
+</script>
+</body>
+</html>
